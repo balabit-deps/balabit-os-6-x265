@@ -1,0 +1,74 @@
+#! /usr/bin/make -f
+
+DEB_HOST_MULTIARCH=$(shell dpkg-architecture -qDEB_HOST_MULTIARCH)
+
+export DEB_LDFLAGS_MAINT_APPEND=-Wl,--as-needed \
+	-L$(CURDIR)/x265-10bit \
+	-L$(CURDIR)/x265-12bit
+# see #789111
+export DEB_LDFLAGS_MAINT_STRIP=-Wl,-Bsymbolic-functions
+# LFS support
+export DEB_CPPFLAGS_MAINT_APPEND=$(shell getconf LFS_CFLAGS)
+
+%:
+	dh $@ --parallel --buildsystem=cmake \
+		--sourcedirectory=source \
+		--builddirectory=x265-8bit
+
+override_dh_auto_clean:
+	dh_auto_clean --builddirectory=x265-10bit
+	dh_auto_clean --builddirectory=x265-12bit
+	dh_auto_clean
+	rm -rf doc/reST/build
+
+# -arch bits
+
+override_dh_auto_configure-arch:
+	dh_auto_configure --builddirectory=x265-10bit -- \
+		-DENABLE_PIC=ON \
+		-DENABLE_CLI=OFF \
+		-DENABLE_SHARED=OFF \
+		-DEXPORT_C_API=OFF \
+		-DHIGH_BIT_DEPTH=ON
+	dh_auto_configure --builddirectory=x265-12bit -- \
+		-DENABLE_PIC=ON \
+		-DENABLE_CLI=OFF \
+		-DENABLE_SHARED=OFF \
+		-DEXPORT_C_API=OFF \
+		-DHIGH_BIT_DEPTH=ON \
+		-DMAIN12=ON
+	dh_auto_configure -- \
+		-DENABLE_PIC=ON \
+		-DLIB_INSTALL_DIR=lib/$(DEB_HOST_MULTIARCH) \
+		-DEXTRA_LIB="x265_main10.a;x265_main12.a" \
+		-DLINKED_10BIT=ON \
+		-DLINKED_12BIT=ON
+
+override_dh_auto_build-arch:
+	dh_auto_build --builddirectory=x265-10bit
+	dh_auto_build --builddirectory=x265-12bit
+	mv x265-10bit/libx265.a x265-10bit/libx265_main10.a
+	mv x265-12bit/libx265.a x265-12bit/libx265_main12.a
+	dh_auto_build
+
+override_dh_auto_install-arch:
+	dh_auto_install
+	ar -M <<EOF \
+		CREATE debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libx265.a \
+		ADDLIB x265-10bit/libx265_main10.a \
+		ADDLIB x265-12bit/libx265_main12.a \
+		SAVE \
+		END \
+EOF
+
+# -indep bits
+
+# no configure, test and install for indep
+override_dh_auto_configure-indep override_dh_auto_test-indep override_dh_auto_install-indep:
+
+override_dh_auto_build-indep:
+	$(MAKE) -C doc/reST html
+
+override_dh_installdocs-indep:
+	dh_installdocs
+	dh_sphinxdoc
